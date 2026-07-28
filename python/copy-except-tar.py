@@ -109,6 +109,23 @@ def confirm_yes(question: str) -> bool:
     return answer in ("", "y", "yes")
 
 
+def wait_for_any_key() -> None:
+    if sys.stdin.isatty():
+        sys.stderr.write("\nPress any key to close... ")
+        sys.stderr.flush()
+        try:
+            import termios, tty
+            fd = sys.stdin.fileno()
+            old = termios.tcgetattr(fd)
+            try:
+                tty.setraw(fd)
+                sys.stdin.read(1)
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        except (ImportError, OSError, termios.error):
+            input()
+
+
 def print_banner() -> None:
     print("=" * 70)
     print("  copy-except-tar — copy a directory excluding specified subfolders")
@@ -368,7 +385,8 @@ def main() -> int:
         print(f"\ntar write failed with exit code {tar_write.returncode}", file=sys.stderr)
         return tar_write.returncode
 
-    print(f"\nCopy complete: {source} -> {dest}")
+    print(f"\nSuccess!")
+    wait_for_any_key()
     return 0
 
 
