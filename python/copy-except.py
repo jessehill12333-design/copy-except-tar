@@ -43,6 +43,44 @@ def validate_dest(p: Path) -> str | None:
     return None
 
 
+def compute_total_bytes(source: Path, excludes: list[str]) -> int:
+    total = 0
+    source_str = str(source)
+    for dirpath, dirnames, filenames in os.walk(source):
+        rel = os.path.relpath(dirpath, source_str)
+        if rel == ".":
+            rel = ""
+        i = len(dirnames) - 1
+        while i >= 0:
+            d_rel = os.path.join(rel, dirnames[i]) if rel else dirnames[i]
+            for ex in excludes:
+                if d_rel == ex or d_rel.startswith(ex + "/") or d_rel.startswith(ex + os.sep):
+                    del dirnames[i]
+                    break
+            i -= 1
+        for f in filenames:
+            f_rel = os.path.join(rel, f) if rel else f
+            skip = False
+            for ex in excludes:
+                if f_rel == ex or f_rel.startswith(ex + "/") or f_rel.startswith(ex + os.sep):
+                    skip = True
+                    break
+            if not skip:
+                try:
+                    total += os.path.getsize(os.path.join(dirpath, f))
+                except OSError:
+                    pass
+    return total
+
+
+def format_bytes(n: int) -> str:
+    for unit in ("", "K", "M", "G", "T"):
+        if abs(n) < 1024:
+            return f"{n:,.0f}{unit}" if unit == "" else f"{n:.1f}{unit}" if unit == "K" else f"{n:.2f}{unit}"
+        n /= 1024
+    return f"{n:.2f}P"
+
+
 def build_rsync_command(source: Path, dest: Path, excludes: list[str], dry_run: bool) -> list[str]:
     cmd = ["rsync", "-a"]
     if dry_run:
@@ -206,8 +244,10 @@ def main() -> int:
         print("\nDry run complete. No files were changed.")
         return 0
 
+    total_bytes = compute_total_bytes(source, excludes)
+    total_str = format_bytes(total_bytes)
     start_time = time.time()
-    print(f"{'Bytes':>16} {'%':>4} {'Speed':>12} {'ETA':>9} {'Elapsed':>9}   {'xfr#':>4} {'ir-chk':>6}   File", file=sys.stderr)
+    print(f"{'Bytes':>12} {'Total':>12} {'Speed':>12} {'Elapsed':>9}   {'xfr#':>4} {'ir-chk':>6}   File", file=sys.stderr)
 
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     current_file = ""
@@ -227,13 +267,15 @@ def main() -> int:
                 if last:
                     elapsed = time.time() - start_time
                     elapsed_str = f"{int(elapsed//3600):02d}:{int((elapsed%3600)//60):02d}:{int(elapsed%60):02d}"
+                    fields = last.split()
+                    bytes_field = fields[0] if fields else ""
+                    speed_field = fields[2] if len(fields) > 2 else ""
                     xfr_pos = last.find("(xfr#")
                     if xfr_pos != -1:
-                        progress = last[:xfr_pos].strip()
                         rest = last[xfr_pos:]
-                        sys.stderr.write(f"\r{progress} {elapsed_str} {rest}  {current_file}")
+                        sys.stderr.write(f"\r{bytes_field:>12} {total_str:>12} {speed_field:>12} {elapsed_str:>9}   {rest}  {current_file}")
                     else:
-                        sys.stderr.write(f"\r{last}  {elapsed_str}  {current_file}")
+                        sys.stderr.write(f"\r{bytes_field:>12} {total_str:>12} {speed_field:>12} {elapsed_str:>9}  {current_file}")
                     sys.stderr.flush()
             elif line.strip() and not line.startswith("created directory"):
                 current_file = line
