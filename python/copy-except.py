@@ -42,15 +42,12 @@ def validate_dest(p: Path) -> str | None:
 
 
 def build_rsync_command(source: Path, dest: Path, excludes: list[str], dry_run: bool) -> list[str]:
-    cmd = ["rsync", "-a", "--progress", "-h"]
+    cmd = ["rsync", "-a", "--info=progress2"]
     if dry_run:
         cmd.append("--dry-run")
     for ex in excludes:
         cmd.extend(["--exclude", ex])
-    src_str = str(source)
-    if not src_str.endswith("/"):
-        src_str += "/"
-    cmd.append(src_str)
+    cmd.append(str(source))
     cmd.append(str(dest))
     return cmd
 
