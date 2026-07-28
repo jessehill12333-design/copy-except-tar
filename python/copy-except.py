@@ -7,6 +7,7 @@ import argparse
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 
@@ -42,9 +43,12 @@ def validate_dest(p: Path) -> str | None:
 
 
 def build_rsync_command(source: Path, dest: Path, excludes: list[str], dry_run: bool) -> list[str]:
-    cmd = ["rsync", "-a", "--info=progress2"]
+    cmd = ["rsync", "-a"]
     if dry_run:
         cmd.append("--dry-run")
+        cmd.append("--info=progress2")
+    else:
+        cmd.append("--info=progress2,NAME")
     for ex in excludes:
         cmd.extend(["--exclude", ex])
     cmd.append(str(source))
@@ -192,19 +196,53 @@ def main() -> int:
     cmd = build_rsync_command(source, dest, excludes, dry_run)
     print(f"\n{'DRY RUN: ' if dry_run else ''}Running: {' '.join(cmd)}")
     print()
-    if not dry_run:
-        print(f"{'Bytes':>16} {'%':>4} {'Speed':>12} {'Time':>9}   xfr#   ir-chk", file=sys.stderr)
-
-    result = subprocess.run(cmd, check=False)
-
-    if result.returncode != 0:
-        print(f"\nrsync finished with exit code {result.returncode}", file=sys.stderr)
-        return result.returncode
 
     if dry_run:
+        result = subprocess.run(cmd, check=False)
+        if result.returncode != 0:
+            print(f"\nrsync finished with exit code {result.returncode}", file=sys.stderr)
+            return result.returncode
         print("\nDry run complete. No files were changed.")
-    else:
-        print(f"\nCopy complete: {source} -> {dest}")
+        return 0
+
+    print(f"{'Bytes':>16} {'%':>4} {'Speed':>12} {'Time':>9}   {'xfr#':>4} {'ir-chk':>6}   File", file=sys.stderr)
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    current_file = ""
+
+    def read_stream(stream, is_error: bool) -> int | None:
+        nonlocal current_file
+        for raw_line in iter(stream.readline, b''):
+            if not raw_line:
+                break
+            line = raw_line.decode("utf-8", errors="replace").rstrip("\n")
+            if is_error:
+                sys.stderr.write(line + "\n")
+                sys.stderr.flush()
+            elif line.startswith("\r"):
+                parts = line.split("\r")
+                last = parts[-1].strip()
+                if last:
+                    sys.stderr.write(f"\r{last}  {current_file}")
+                    sys.stderr.flush()
+            elif line.strip() and not line.startswith("created directory"):
+                current_file = line
+        return None
+
+    threads = []
+    for stream, is_err in [(proc.stdout, False), (proc.stderr, True)]:
+        t = threading.Thread(target=read_stream, args=(stream, is_err), daemon=True)
+        t.start()
+        threads.append(t)
+    for t in threads:
+        t.join()
+    proc.wait()
+
+    if proc.returncode != 0:
+        print(f"\nrsync finished with exit code {proc.returncode}", file=sys.stderr)
+        return proc.returncode
+
+    print(f"\nCopy complete: {source} -> {dest}")
     return 0
 
 
