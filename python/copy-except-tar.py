@@ -76,11 +76,11 @@ def compute_total_bytes(source: Path, excludes: list[str]) -> int:
 
 
 def format_bytes(n: int) -> str:
-    for unit in ("", "K", "M", "G", "T"):
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
         if abs(n) < 1024:
-            return f"{n:,.0f}{unit}" if unit == "" else f"{n:.1f}{unit}" if unit == "K" else f"{n:.2f}{unit}"
+            return f"{n:,.0f}{unit}" if unit == "B" else f"{n:.1f}{unit}" if unit == "KiB" else f"{n:.2f}{unit}"
         n /= 1024
-    return f"{n:.2f}P"
+    return f"{n:.2f}PiB"
 
 
 def build_tar_read_cmd(source: Path, excludes: list[str], verbose: bool = False) -> list[str]:
@@ -133,6 +133,7 @@ def print_banner() -> None:
     print("  Source files are COPIED (not moved). Nothing is deleted.")
     print()
     print("  Keep the terminal window wide to keep progress on one line.")
+    print("  Press 'p' during transfer to pause/resume.")
     print("  Enter blank at any prompt to skip to the next step.")
     print("  Confirm the summary to proceed with the actual copy.")
     print("=" * 70)
@@ -309,23 +310,32 @@ def main() -> int:
                         os.kill(tar_write.pid, signal.SIGSTOP)
                         paused = True
 
+    tar_stderr_lines: list[str] = []
+
     def read_tar_stderr() -> None:
         nonlocal current_file
-        for raw_line in iter(tar_read.stderr.readline, b''):
-            if not raw_line:
-                break
-            line = raw_line.decode("utf-8", errors="replace").rstrip("\n")
-            if line.strip():
-                current_file = line
+        try:
+            for raw_line in iter(tar_read.stderr.readline, b''):
+                if not raw_line:
+                    break
+                line = raw_line.decode("utf-8", errors="replace").rstrip("\n")
+                if line.strip():
+                    tar_stderr_lines.append(line)
+                    current_file = line
+        except (ValueError, OSError):
+            pass
 
     def read_write_stderr(proc, label: str) -> None:
-        for raw_line in iter(proc.stderr.readline, b''):
-            if not raw_line:
-                break
-            line = raw_line.decode("utf-8", errors="replace").rstrip("\n")
-            if line.strip():
-                sys.stderr.write(f"[{label}] {line}\n")
-                sys.stderr.flush()
+        try:
+            for raw_line in iter(proc.stderr.readline, b''):
+                if not raw_line:
+                    break
+                line = raw_line.decode("utf-8", errors="replace").rstrip("\n")
+                if line.strip():
+                    sys.stderr.write(f"[{label}] {line}\n")
+                    sys.stderr.flush()
+        except (ValueError, OSError):
+            pass
 
     stderr_thread_read = threading.Thread(target=read_tar_stderr, daemon=True)
     stderr_thread_read.start()
@@ -375,11 +385,24 @@ def main() -> int:
 
     tar_read.wait()
     tar_write.wait()
-    stderr_thread_read.join()
-    stderr_thread_write.join()
+    for t in (stderr_thread_read, stderr_thread_write):
+        while t.is_alive():
+            t.join(timeout=1)
+            try:
+                tar_read.stderr.close()
+            except OSError:
+                pass
+            try:
+                tar_write.stderr.close()
+            except OSError:
+                pass
 
     if tar_read.returncode != 0:
         print(f"\ntar read failed with exit code {tar_read.returncode}", file=sys.stderr)
+        error_lines = [l for l in tar_stderr_lines if l.startswith("tar:") or "error" in l.lower()]
+        if error_lines:
+            for l in error_lines[-5:]:
+                print(f"  {l}", file=sys.stderr)
         return tar_read.returncode
     if tar_write.returncode != 0:
         print(f"\ntar write failed with exit code {tar_write.returncode}", file=sys.stderr)
