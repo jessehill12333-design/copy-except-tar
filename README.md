@@ -8,6 +8,29 @@ Independent repository for the `copy-except-tar` workstation tool.
 Copy a directory excluding specified subfolder paths.
 
 
+## Notes
+
+### Progress overwrite and line-wrapping
+
+The single-line progress display uses `\r` (carriage return) to overwrite the
+same terminal line on each update. If the terminal is narrower than the output
+line (approximately 95 characters with a long filename), the line wraps
+visually and `\r` only resets to the start of the wrapped continuation —
+causing every progress update to appear on a new line. Keep the terminal wide
+enough to avoid wrapping, or the progress prints as multiple lines.
+
+### Original switch from rsync to tar
+
+This tool was split from `copy-except-rsync`. Tar pipe (`tar cf - | tar xf -`)
+was chosen over rsync for HDD-to-HDD copies because it streams sequentially
+(no per-file seeking), which is roughly 2x faster on mechanical drives.
+Trade-off: no incremental sync — tar always re-copies everything.
+
+### Naming convention
+
+The `-tar` suffix distinguishes the tar-based (fast, sequential) variant from
+the `copy-except-rsync` variant (slower on HDDs, but supports incremental sync).
+
 ## Run
 
 Run `./run.sh`, or use the optional shortcut under `desktop/`.

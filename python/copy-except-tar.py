@@ -299,8 +299,7 @@ def main() -> int:
                 break
             line = raw_line.decode("utf-8", errors="replace").rstrip("\n")
             if line.strip():
-                raw = line.lstrip("./")
-                current_file = raw.rsplit("/", 1)[-1] if "/" in raw else raw
+                current_file = line
 
     def read_write_stderr(proc, label: str) -> None:
         for raw_line in iter(proc.stderr.readline, b''):
