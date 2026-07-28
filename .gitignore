@@ -1,0 +1,11 @@
+# Per-tool runtime data
+.venv/
+venvs/
+cache/
+state/
+__pycache__/
+*.py[cod]
+*.log
+*.lock
+.DS_Store
+.ruff_cache/

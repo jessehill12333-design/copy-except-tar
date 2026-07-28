@@ -1,0 +1,11 @@
+#!/usr/bin/env xdg-open
+[Desktop Entry]
+Type=Application
+Name=Copy Except
+Comment=Copy a directory excluding specified subfolder paths
+Exec=/tumble-storage/tumble-script/copy-except/run.sh
+Path=/tumble-storage/tumble-script/copy-except
+Icon=edit-copy
+Terminal=false
+Categories=Utility;
+X-KDE-Trusted=true
