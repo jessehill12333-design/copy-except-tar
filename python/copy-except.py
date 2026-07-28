@@ -192,6 +192,8 @@ def main() -> int:
     cmd = build_rsync_command(source, dest, excludes, dry_run)
     print(f"\n{'DRY RUN: ' if dry_run else ''}Running: {' '.join(cmd)}")
     print()
+    if not dry_run:
+        print(f"{'Bytes':>16} {'%':>4} {'Speed':>12} {'Time':>9}   xfr#   ir-chk", file=sys.stderr)
 
     result = subprocess.run(cmd, check=False)
 
