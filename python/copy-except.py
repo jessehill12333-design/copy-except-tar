@@ -105,9 +105,24 @@ def prompt_dest() -> Path | None:
         return p
 
 
-def prompt_excludes() -> list[str]:
+def normalize_exclude(raw: str, source: Path) -> str:
+    excluded = Path(raw.strip().strip("\"'"))
+    if excluded.is_absolute():
+        try:
+            resolved = excluded.resolve()
+            rel = resolved.relative_to(source)
+            return str(rel)
+        except (ValueError, RuntimeError):
+            pass
+        rel = excluded.relative_to(excluded.anchor)
+        return str(rel)
+    return raw.strip().strip("\"'")
+
+
+def prompt_excludes(source: Path) -> list[str]:
     excludes = []
-    print("\nExcluded subfolder paths (relative to source).")
+    print("\nExcluded subfolder paths (relative or absolute).")
+    print("Absolute paths under the source are auto-converted to relative.")
     print("Enter one per line. Leave blank to finish adding exclusions.")
     while True:
         try:
@@ -116,7 +131,8 @@ def prompt_excludes() -> list[str]:
             break
         if not raw:
             break
-        excludes.append(raw)
+        normalized = normalize_exclude(raw, source)
+        excludes.append(normalized)
     return excludes
 
 
@@ -155,7 +171,7 @@ def main() -> int:
         if dst_err:
             print(f"ERROR: {dst_err}", file=sys.stderr)
             return 1
-        excludes = prompt_excludes()
+        excludes = prompt_excludes(source)
     else:
         source = prompt_source()
         if source is None:
@@ -163,7 +179,7 @@ def main() -> int:
         dest = prompt_dest()
         if dest is None:
             return 2
-        excludes = prompt_excludes()
+        excludes = prompt_excludes(source)
 
     dry_run = args.dry_run
     show_summary(source, dest, excludes, dry_run)
