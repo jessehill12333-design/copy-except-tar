@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 
@@ -205,7 +206,8 @@ def main() -> int:
         print("\nDry run complete. No files were changed.")
         return 0
 
-    print(f"{'Bytes':>16} {'%':>4} {'Speed':>12} {'Time':>9}   {'xfr#':>4} {'ir-chk':>6}   File", file=sys.stderr)
+    start_time = time.time()
+    print(f"{'Bytes':>16} {'%':>4} {'Speed':>12} {'ETA':>9} {'Elapsed':>9}   {'xfr#':>4} {'ir-chk':>6}   File", file=sys.stderr)
 
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     current_file = ""
@@ -223,7 +225,15 @@ def main() -> int:
                 parts = line.split("\r")
                 last = parts[-1].strip()
                 if last:
-                    sys.stderr.write(f"\r{last}  {current_file}")
+                    elapsed = time.time() - start_time
+                    elapsed_str = f"{int(elapsed//3600):02d}:{int((elapsed%3600)//60):02d}:{int(elapsed%60):02d}"
+                    xfr_pos = last.find("(xfr#")
+                    if xfr_pos != -1:
+                        progress = last[:xfr_pos].strip()
+                        rest = last[xfr_pos:]
+                        sys.stderr.write(f"\r{progress} {elapsed_str} {rest}  {current_file}")
+                    else:
+                        sys.stderr.write(f"\r{last}  {elapsed_str}  {current_file}")
                     sys.stderr.flush()
             elif line.strip() and not line.startswith("created directory"):
                 current_file = line
