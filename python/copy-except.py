@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -247,7 +248,7 @@ def main() -> int:
     total_bytes = compute_total_bytes(source, excludes)
     total_str = format_bytes(total_bytes)
     start_time = time.time()
-    print(f"{'Bytes':>12} {'Total':>12} {'Speed':>12} {'Elapsed':>9}   {'xfr#':>4} {'ir-chk':>6}   File", file=sys.stderr)
+    print(f"{'Bytes':>12} {'Total':>12} {'Speed':>12} {'Elapsed':>9}   {'xfr#':>4}   File", file=sys.stderr)
 
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     current_file = ""
@@ -270,12 +271,9 @@ def main() -> int:
                     fields = last.split()
                     bytes_field = fields[0] if fields else ""
                     speed_field = fields[2] if len(fields) > 2 else ""
-                    xfr_pos = last.find("(xfr#")
-                    if xfr_pos != -1:
-                        rest = last[xfr_pos:]
-                        sys.stderr.write(f"\r{bytes_field:>12} {total_str:>12} {speed_field:>12} {elapsed_str:>9}   {rest}  {current_file}")
-                    else:
-                        sys.stderr.write(f"\r{bytes_field:>12} {total_str:>12} {speed_field:>12} {elapsed_str:>9}  {current_file}")
+                    m = re.search(r'xfr#(\d+)', last)
+                    xfr = m.group(1) if m else ""
+                    sys.stderr.write(f"\r{bytes_field:>12} {total_str:>12} {speed_field:>12} {elapsed_str:>9}   {xfr:>4}   {current_file}")
                     sys.stderr.flush()
             elif line.strip() and not line.startswith("created directory"):
                 current_file = line
