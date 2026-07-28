@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import select
+import signal
 import subprocess
 import sys
 import threading
@@ -252,6 +254,10 @@ def main() -> int:
     total_bytes = compute_total_bytes(source, excludes)
     total_str = format_bytes(total_bytes)
     start_time = time.time()
+    paused_time = 0.0
+    pause_start = 0.0
+    paused = False
+    pause_done = threading.Event()
     print(f"{'Bytes':>12} {'Total':>12} {'Speed':>12} {'Elapsed':>9}", file=sys.stderr)
 
     tar_read_cmd = build_tar_read_cmd(source, excludes, verbose=True)
@@ -264,6 +270,26 @@ def main() -> int:
 
     current_file = ""
 
+    def pause_listener() -> None:
+        nonlocal paused, paused_time, pause_start
+        if not sys.stdin.isatty():
+            return
+        while not pause_done.is_set():
+            r, _, _ = select.select([sys.stdin], [], [], 0.3)
+            if r:
+                ch = sys.stdin.read(1)
+                if ch in ('p', 'P'):
+                    if paused:
+                        os.kill(tar_read.pid, signal.SIGCONT)
+                        os.kill(tar_write.pid, signal.SIGCONT)
+                        paused_time += time.time() - pause_start
+                        paused = False
+                    else:
+                        pause_start = time.time()
+                        os.kill(tar_read.pid, signal.SIGSTOP)
+                        os.kill(tar_write.pid, signal.SIGSTOP)
+                        paused = True
+
     def read_tar_stderr() -> None:
         nonlocal current_file
         for raw_line in iter(tar_read.stderr.readline, b''):
@@ -272,7 +298,6 @@ def main() -> int:
             line = raw_line.decode("utf-8", errors="replace").rstrip("\n")
             if line.strip():
                 current_file = line
-        t_stopped = True
 
     def read_write_stderr(proc, label: str) -> None:
         for raw_line in iter(proc.stderr.readline, b''):
@@ -301,16 +326,23 @@ def main() -> int:
             now = time.time()
             if now - last_update >= 0.2:
                 last_update = now
-                elapsed = now - start_time
+                elapsed = now - start_time - paused_time
                 elapsed_str = f"{int(elapsed//3600):02d}:{int((elapsed%3600)//60):02d}:{int(elapsed%60):02d}"
                 speed = bytes_copied / elapsed if elapsed > 0 else 0
                 speed_str = format_bytes(int(speed)) + "/s"
                 bytes_str = format_bytes(bytes_copied)
-                sys.stderr.write(f"\r{bytes_str:>12} {total_str:>12} {speed_str:>12} {elapsed_str:>9}   {current_file}")
+                suffix = "  PAUSED" if paused else ""
+                sys.stderr.write(f"\r{bytes_str:>12} {total_str:>12} {speed_str:>12} {elapsed_str:>9}   {current_file}{suffix}")
                 sys.stderr.flush()
     finally:
         tar_read.stdout.close()
         tar_write.stdin.close()
+
+    pause_done.set()
+    if paused:
+        os.kill(tar_read.pid, signal.SIGCONT)
+        os.kill(tar_write.pid, signal.SIGCONT)
+        paused = False
 
     tar_read.wait()
     tar_write.wait()
