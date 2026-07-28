@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import subprocess
 import sys
 import threading
@@ -82,17 +81,21 @@ def format_bytes(n: int) -> str:
     return f"{n:.2f}P"
 
 
-def build_rsync_command(source: Path, dest: Path, excludes: list[str], dry_run: bool) -> list[str]:
-    cmd = ["rsync", "-a"]
-    if dry_run:
-        cmd.append("--dry-run")
-        cmd.append("--info=progress2")
-    else:
-        cmd.append("--info=progress2,NAME")
+def build_tar_read_cmd(source: Path, excludes: list[str], verbose: bool = False) -> list[str]:
+    cmd = ["tar", "cf", "-"]
+    if verbose:
+        cmd.append("-v")
     for ex in excludes:
         cmd.extend(["--exclude", ex])
-    cmd.append(str(source))
-    cmd.append(str(dest))
+    cmd.extend(["-C", str(source), "."])
+    return cmd
+
+
+def build_tar_list_cmd(source: Path, excludes: list[str]) -> list[str]:
+    cmd = ["tar", "tf", "-"]
+    for ex in excludes:
+        cmd.extend(["--exclude", ex])
+    cmd.extend(["-C", str(source), "."])
     return cmd
 
 
@@ -107,7 +110,7 @@ def confirm_yes(question: str) -> bool:
 def print_banner() -> None:
     print("=" * 70)
     print("  copy-except — copy a directory excluding specified subfolders")
-    print("  Uses rsync -a with --exclude for each excluded path.")
+    print("  Uses tar pipe for fast sequential transfer.")
     print("  Source files are COPIED (not moved). Nothing is deleted.")
     print()
     print("  Enter blank at any prompt to skip to the next step.")
@@ -233,14 +236,15 @@ def main() -> int:
             print("Cancelled.")
             return 0
 
-    cmd = build_rsync_command(source, dest, excludes, dry_run)
-    print(f"\n{'DRY RUN: ' if dry_run else ''}Running: {' '.join(cmd)}")
-    print()
+    dest.mkdir(parents=True, exist_ok=True)
 
     if dry_run:
+        cmd = build_tar_list_cmd(source, excludes)
+        print(f"\nDry run: file list from {' '.join(cmd)}")
+        print()
         result = subprocess.run(cmd, check=False)
         if result.returncode != 0:
-            print(f"\nrsync finished with exit code {result.returncode}", file=sys.stderr)
+            print(f"\ntar finished with exit code {result.returncode}", file=sys.stderr)
             return result.returncode
         print("\nDry run complete. No files were changed.")
         return 0
@@ -248,49 +252,77 @@ def main() -> int:
     total_bytes = compute_total_bytes(source, excludes)
     total_str = format_bytes(total_bytes)
     start_time = time.time()
-    print(f"{'Bytes':>12} {'Total':>12} {'Speed':>12} {'Elapsed':>9}   {'xfr#':>4}   File", file=sys.stderr)
+    print(f"{'Bytes':>12} {'Total':>12} {'Speed':>12} {'Elapsed':>9}", file=sys.stderr)
 
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    tar_read_cmd = build_tar_read_cmd(source, excludes, verbose=True)
+    tar_read = subprocess.Popen(tar_read_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    tar_write = subprocess.Popen(
+        ["tar", "xf", "-", "-C", str(dest)],
+        stdin=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+
     current_file = ""
 
-    def read_stream(stream, is_error: bool) -> int | None:
+    def read_tar_stderr() -> None:
         nonlocal current_file
-        for raw_line in iter(stream.readline, b''):
+        for raw_line in iter(tar_read.stderr.readline, b''):
             if not raw_line:
                 break
             line = raw_line.decode("utf-8", errors="replace").rstrip("\n")
-            if is_error:
-                sys.stderr.write(line + "\n")
-                sys.stderr.flush()
-            elif line.startswith("\r"):
-                parts = line.split("\r")
-                last = parts[-1].strip()
-                if last:
-                    elapsed = time.time() - start_time
-                    elapsed_str = f"{int(elapsed//3600):02d}:{int((elapsed%3600)//60):02d}:{int(elapsed%60):02d}"
-                    fields = last.split()
-                    bytes_field = fields[0] if fields else ""
-                    speed_field = fields[2] if len(fields) > 2 else ""
-                    m = re.search(r'xfr#(\d+)', last)
-                    xfr = m.group(1) if m else ""
-                    sys.stderr.write(f"\r{bytes_field:>12} {total_str:>12} {speed_field:>12} {elapsed_str:>9}   {xfr:>4}   {current_file}")
-                    sys.stderr.flush()
-            elif line.strip() and not line.startswith("created directory"):
+            if line.strip():
                 current_file = line
-        return None
+        t_stopped = True
 
-    threads = []
-    for stream, is_err in [(proc.stdout, False), (proc.stderr, True)]:
-        t = threading.Thread(target=read_stream, args=(stream, is_err), daemon=True)
-        t.start()
-        threads.append(t)
-    for t in threads:
-        t.join()
-    proc.wait()
+    def read_write_stderr(proc, label: str) -> None:
+        for raw_line in iter(proc.stderr.readline, b''):
+            if not raw_line:
+                break
+            line = raw_line.decode("utf-8", errors="replace").rstrip("\n")
+            if line.strip():
+                sys.stderr.write(f"[{label}] {line}\n")
+                sys.stderr.flush()
 
-    if proc.returncode != 0:
-        print(f"\nrsync finished with exit code {proc.returncode}", file=sys.stderr)
-        return proc.returncode
+    stderr_thread_read = threading.Thread(target=read_tar_stderr, daemon=True)
+    stderr_thread_read.start()
+    stderr_thread_write = threading.Thread(target=read_write_stderr, args=(tar_write, "tar-write"), daemon=True)
+    stderr_thread_write.start()
+
+    bytes_copied = 0
+    buf_size = 131072
+    last_update = 0.0
+    try:
+        while True:
+            buf = tar_read.stdout.read(buf_size)
+            if not buf:
+                break
+            bytes_copied += len(buf)
+            tar_write.stdin.write(buf)
+            now = time.time()
+            if now - last_update >= 0.2:
+                last_update = now
+                elapsed = now - start_time
+                elapsed_str = f"{int(elapsed//3600):02d}:{int((elapsed%3600)//60):02d}:{int(elapsed%60):02d}"
+                speed = bytes_copied / elapsed if elapsed > 0 else 0
+                speed_str = format_bytes(int(speed)) + "/s"
+                bytes_str = format_bytes(bytes_copied)
+                sys.stderr.write(f"\r{bytes_str:>12} {total_str:>12} {speed_str:>12} {elapsed_str:>9}   {current_file}")
+                sys.stderr.flush()
+    finally:
+        tar_read.stdout.close()
+        tar_write.stdin.close()
+
+    tar_read.wait()
+    tar_write.wait()
+    stderr_thread_read.join()
+    stderr_thread_write.join()
+
+    if tar_read.returncode != 0:
+        print(f"\ntar read failed with exit code {tar_read.returncode}", file=sys.stderr)
+        return tar_read.returncode
+    if tar_write.returncode != 0:
+        print(f"\ntar write failed with exit code {tar_write.returncode}", file=sys.stderr)
+        return tar_write.returncode
 
     print(f"\nCopy complete: {source} -> {dest}")
     return 0
