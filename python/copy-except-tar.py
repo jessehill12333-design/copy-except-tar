@@ -258,7 +258,7 @@ def main() -> int:
     pause_start = 0.0
     paused = False
     pause_done = threading.Event()
-    print(f"{'Bytes':>12} {'Total':>12} {'Speed':>12} {'Elapsed':>9}", file=sys.stderr)
+    print(f"{'Bytes':>12} {'Total':>12} {'Speed':>12} {'Avg':>12} {'Elapsed':>9}", file=sys.stderr)
 
     tar_read_cmd = build_tar_read_cmd(source, excludes, verbose=True)
     tar_read = subprocess.Popen(tar_read_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -316,6 +316,8 @@ def main() -> int:
     bytes_copied = 0
     buf_size = 131072
     last_update = 0.0
+    last_bytes = 0
+    last_speed_time = 0.0
     try:
         while True:
             buf = tar_read.stdout.read(buf_size)
@@ -328,11 +330,19 @@ def main() -> int:
                 last_update = now
                 elapsed = now - start_time - paused_time
                 elapsed_str = f"{int(elapsed//3600):02d}:{int((elapsed%3600)//60):02d}:{int(elapsed%60):02d}"
-                speed = bytes_copied / elapsed if elapsed > 0 else 0
-                speed_str = format_bytes(int(speed)) + "/s"
                 bytes_str = format_bytes(bytes_copied)
+                delta_bytes = bytes_copied - last_bytes
+                delta_t = now - last_speed_time
+                if delta_t > 0 and delta_bytes > 0:
+                    speed_str = format_bytes(int(delta_bytes / delta_t)) + "/s"
+                else:
+                    speed_str = "0.00B/s"
+                avg_speed = bytes_copied / elapsed if elapsed > 0 else 0
+                avg_str = format_bytes(int(avg_speed)) + "/s"
+                last_bytes = bytes_copied
+                last_speed_time = now
                 suffix = "  PAUSED" if paused else ""
-                sys.stderr.write(f"\r{bytes_str:>12} {total_str:>12} {speed_str:>12} {elapsed_str:>9}   {current_file}{suffix}")
+                sys.stderr.write(f"\r{bytes_str:>12} {total_str:>12} {speed_str:>12} {avg_str:>12} {elapsed_str:>9}   {current_file}{suffix}")
                 sys.stderr.flush()
     finally:
         tar_read.stdout.close()
