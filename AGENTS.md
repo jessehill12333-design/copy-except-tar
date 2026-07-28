@@ -1,6 +1,6 @@
 # AI editing guide
 
-Scope: only the `copy-except` tool in this repository.
+Scope: only the `copy-except-tar` tool in this repository.
 
 - Keep the repository independently runnable; do not reference sibling repositories.
 - Put generated data in `cache/`, `state/`, or `venvs/`; these paths are Git-ignored.

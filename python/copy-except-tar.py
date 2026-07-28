@@ -109,7 +109,7 @@ def confirm_yes(question: str) -> bool:
 
 def print_banner() -> None:
     print("=" * 70)
-    print("  copy-except — copy a directory excluding specified subfolders")
+    print("  copy-except-tar — copy a directory excluding specified subfolders")
     print("  Uses tar pipe for fast sequential transfer.")
     print("  Source files are COPIED (not moved). Nothing is deleted.")
     print()
