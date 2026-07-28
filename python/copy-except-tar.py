@@ -231,6 +231,7 @@ def main() -> int:
         excludes = prompt_excludes(source)
 
     dry_run = args.dry_run
+    dest = dest / source.name
     show_summary(source, dest, excludes, dry_run)
 
     if not dry_run:
