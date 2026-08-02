@@ -76,11 +76,17 @@ def compute_total_bytes(source: Path, excludes: list[str]) -> int:
 
 
 def format_bytes(n: int) -> str:
-    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+    """Format a byte count with binary IEC units and no decimal SI labels."""
+    n = float(n) / 1024
+    for unit in ("KiB", "MiB", "GiB", "TiB"):
         if abs(n) < 1024:
-            return f"{n:,.0f}{unit}" if unit == "B" else f"{n:.1f}{unit}" if unit == "KiB" else f"{n:.2f}{unit}"
+            return f"{n:.1f} {unit}" if unit == "KiB" else f"{n:.2f} {unit}"
         n /= 1024
-    return f"{n:.2f}PiB"
+    return f"{n:.2f} PiB"
+
+
+def format_rate(bytes_per_second: float) -> str:
+    return f"{bytes_per_second / 1024**2:.2f} MiB/s"
 
 
 def build_tar_read_cmd(source: Path, excludes: list[str], verbose: bool = False) -> list[str]:
@@ -278,7 +284,7 @@ def main() -> int:
     pause_start = 0.0
     paused = False
     pause_done = threading.Event()
-    print(f"{'Bytes':>12} {'Total':>12} {'Speed':>12} {'Avg':>12} {'Elapsed':>9}", file=sys.stderr)
+    print(f"{'Size':>12} {'Total':>12} {'Speed':>12} {'Avg':>12} {'Elapsed':>9}", file=sys.stderr)
 
     tar_read_cmd = build_tar_read_cmd(source, excludes, verbose=True)
     tar_read = subprocess.Popen(tar_read_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -363,11 +369,11 @@ def main() -> int:
                 delta_bytes = bytes_copied - last_bytes
                 delta_t = now - last_speed_time
                 if delta_t > 0 and delta_bytes > 0:
-                    speed_str = format_bytes(int(delta_bytes / delta_t)) + "/s"
+                    speed_str = format_rate(delta_bytes / delta_t)
                 else:
-                    speed_str = "0.00B/s"
+                    speed_str = "0.00 MiB/s"
                 avg_speed = bytes_copied / elapsed if elapsed > 0 else 0
-                avg_str = format_bytes(int(avg_speed)) + "/s"
+                avg_str = format_rate(avg_speed)
                 last_bytes = bytes_copied
                 last_speed_time = now
                 suffix = "  PAUSED" if paused else ""
