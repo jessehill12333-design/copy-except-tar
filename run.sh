@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Record only this top-level parent; nested run.sh calls inherit the guard.
+# shellcheck source=/dev/null
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/_code/_maintenance/record-script-usage.sh"
 set -euo pipefail
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 case "${1:-}" in
